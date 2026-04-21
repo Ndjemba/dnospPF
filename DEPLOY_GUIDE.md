@@ -6,21 +6,44 @@ Pour héberger votre application en ligne, vous avez plusieurs options. Voici le
 
 Étant donné que votre application utilise **SQLite** (fichiers locaux) et **Socket.io** (connexion persistante), je vous recommande des plateformes qui gèrent les serveurs d'arrière-plan et les volumes persistants :
 
-### Option A : Render.com (Simple)
-1. Créez un compte sur [Render.com](https://render.com).
-2. Créez un nouveau **"Web Service"**.
-3. Connectez votre dépôt GitHub.
-4. **Configuration :**
-   - Runtime : `Node`
-   - Build Command : `npm install && npx prisma generate && npm run build`
-   - Start Command : `npx prisma db push && npm start`
-5. **Important :** Ajoutez un **"Disk"** (Volume) de 1 Go monté sur `/app/data` et `/app/uploads` pour ne pas perdre vos fichiers et votre base de données à chaque redémarrage.
+### Option A : Render.com (Recommandé pour Next.js + SQLite)
+Render est idéal car il permet de connecter directement votre dépôt GitHub et de gérer un volume persistant pour votre base de données SQLite.
 
-### Option B : VPS (DigitalOcean, OVH, AWS) - Plus de contrôle
-Si vous voulez un contrôle total, louez un petit serveur Linux (Ubuntu).
-1. Installez Docker.
-2. Utilisez le `Dockerfile` fourni ci-dessous.
-3. Configurez un nom de domaine avec Nginx et SSL (Certbot).
+1. Créez un compte sur [Render.com](https://render.com).
+2. Cliquez sur **"New +"** > **"Web Service"**.
+3. Connectez votre dépôt GitHub `dnospPF`.
+4. **Configuration :**
+   - **Name** : `dnosp-pf`
+   - **Runtime** : `Docker` (Plus simple pour gérer Prisma et SQLite ensemble)
+   - **Plan** : `Starter` (ou Free, mais le Free s'éteint après 15 min d'inactivité)
+5. **Variables d'environnement (Advanced) :**
+   - `DATABASE_URL` : `file:/app/data/prod.db`
+   - `NEXTAUTH_SECRET` : Cliquez sur "Generate" ou mettez une phrase secrète.
+   - `NEXTAUTH_URL` : L'URL de votre site (ex: `https://dnosp-pf.onrender.com`).
+6. **Disques (Volumes) :**
+   - Allez dans l'onglet **"Disks"**.
+   - Cliquez sur **"Add Disk"**.
+   - **Name** : `database-data`
+   - **Mount Path** : `/app/data`
+   - **Size** : `1 GB`
+   - *Répétez l'opération pour les uploads si nécessaire avec le Mount Path `/app/uploads`.*
+
+---
+
+### Option B : Railway.app
+Railway est aussi une excellente alternative à Render, avec un déploiement très rapide depuis GitHub.
+1. Connectez votre GitHub sur [Railway.app](https://railway.app).
+2. Créez un nouveau projet à partir de votre dépôt.
+3. Railway détectera automatiquement le `Dockerfile`.
+4. Ajoutez un **Volume** monté sur `/app/data` pour SQLite.
+
+---
+
+### Option C : VPS (DigitalOcean, OVH)
+Si vous préférez un VPS :
+1. Installez Docker sur votre serveur.
+2. Clonez le dépôt.
+3. Lancez avec Docker Compose (recommandé pour gérer le volume).
 
 ---
 

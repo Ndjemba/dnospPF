@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    environment:
+      - DATABASE_URL=file:/app/data/prod.db
+      - NEXTAUTH_SECRET=votre_secret_tres_long_et_aleatoire
+      - NEXTAUTH_URL=http://localhost:3000 # À changer en production
+      - NODE_ENV=production
+    restart: always
