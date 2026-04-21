@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, User, Monitor, MonitorOff } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, User, Monitor, MonitorOff, AlertCircle } from "lucide-react";
 import Peer, { MediaConnection } from "peerjs";
+import { io, Socket } from "socket.io-client";
 
 interface VideoConferenceProps {
   roomId: string;
@@ -14,44 +15,127 @@ export default function VideoConference({ roomId }: VideoConferenceProps) {
   const [micOn, setMicOn] = useState(true);
   const [videoOn, setVideoOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
   const myVideoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<Peer | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const callsRef = useRef<{ [key: string]: MediaConnection }>({});
 
   useEffect(() => {
-    const initPeer = async () => {
+    let currentStream: MediaStream | null = null;
+
+    const init = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        // 1. Initialiser le flux média
+        currentStream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
-        setMyStream(stream);
-        if (myVideoRef.current) myVideoRef.current.srcObject = stream;
+        setMyStream(currentStream);
+        if (myVideoRef.current) myVideoRef.current.srcObject = currentStream;
+        setError(null);
 
-        const peer = new Peer();
+        // 2. Initialiser Socket.io pour la signalisation
+        // On appelle l'API pour s'assurer que le serveur socket est démarré
+        await fetch("/api/socket");
+        const socket = io({
+          path: "/api/socket",
+          addTrailingSlash: false,
+        });
+        socketRef.current = socket;
+
+        // 3. Initialiser PeerJS avec des serveurs STUN pour passer les firewalls
+        const peer = new Peer("", {
+          config: {
+            iceServers: [
+              { urls: "stun:stun.l.google.com:19302" },
+              { urls: "stun:stun1.l.google.com:19302" },
+              { urls: "stun:stun2.l.google.com:19302" },
+            ],
+          },
+        });
         peerRef.current = peer;
 
-        peer.on("open", (id) => {
-          console.log("My peer ID is: " + id);
+        peer.on("open", (userId) => {
+          console.log("Connected to PeerJS with ID:", userId);
+          socket.emit("join-room", roomId, userId);
         });
 
+        // Recevoir un appel d'un nouveau venu
         peer.on("call", (call) => {
-          call.answer(stream);
-          callsRef.current[call.peer] = call;
+          console.log("Receiving call from:", call.peer);
+          call.answer(currentStream!);
+          
           call.on("stream", (remoteStream) => {
             setPeers((prev) => ({ ...prev, [call.peer]: remoteStream }));
           });
+
+          call.on("close", () => {
+            setPeers((prev) => {
+              const newPeers = { ...prev };
+              delete newPeers[call.peer];
+              return newPeers;
+            });
+          });
+          
+          callsRef.current[call.peer] = call;
         });
-      } catch (err) {
+
+        // Quand Socket.io nous dit qu'un nouvel utilisateur est là, on l'appelle
+        socket.on("user-connected", (userId) => {
+          if (userId === peer.id) return;
+          console.log("User connected to room:", userId);
+          
+          // Appeler le nouvel utilisateur
+          const call = peer.call(userId, currentStream!);
+          
+          call.on("stream", (remoteStream) => {
+            setPeers((prev) => ({ ...prev, [userId]: remoteStream }));
+          });
+
+          call.on("close", () => {
+            setPeers((prev) => {
+              const newPeers = { ...prev };
+              delete newPeers[userId];
+              return newPeers;
+            });
+          });
+
+          callsRef.current[userId] = call;
+        });
+
+        socket.on("user-disconnected", (userId) => {
+          console.log("User disconnected:", userId);
+          if (callsRef.current[userId]) {
+            callsRef.current[userId].close();
+            delete callsRef.current[userId];
+          }
+          setPeers((prev) => {
+            const newPeers = { ...prev };
+            delete newPeers[userId];
+            return newPeers;
+          });
+        });
+
+      } catch (err: any) {
         console.error("Failed to get local stream", err);
+        if (err.name === 'NotAllowedError') {
+          setError("Accès caméra/micro refusé. Veuillez autoriser l'accès dans votre navigateur.");
+        } else if (err.name === 'NotFoundError') {
+          setError("Aucune caméra ou micro trouvé sur cet appareil.");
+        } else {
+          setError("Erreur lors de l'accès à la caméra : " + err.message);
+        }
       }
     };
 
-    initPeer();
+    init();
 
     return () => {
-      myStream?.getTracks().forEach(track => track.stop());
+      currentStream?.getTracks().forEach(track => track.stop());
       peerRef.current?.destroy();
+      socketRef.current?.disconnect();
     };
   }, [roomId]);
 
@@ -121,13 +205,26 @@ export default function VideoConference({ roomId }: VideoConferenceProps) {
           "relative bg-surface-800 rounded-2xl overflow-hidden border transition-all duration-500 aspect-video group",
           isScreenSharing ? "sm:col-span-2 border-brand-primary ring-4 ring-brand-primary/10 shadow-2xl" : "border-white/5 shadow-lg"
         )}>
-          <video
-            ref={myVideoRef}
-            autoPlay
-            muted
-            playsInline
-            className="w-full h-full object-contain bg-surface-950"
-          />
+          {error ? (
+            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-surface-950">
+              <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+              <p className="text-red-400 text-sm font-medium">{error}</p>
+              <button 
+                onClick={() => window.location.reload()}
+                className="mt-4 px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded-lg transition-colors"
+              >
+                Réessayer
+              </button>
+            </div>
+          ) : (
+            <video
+              ref={myVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-contain bg-surface-950"
+            />
+          )}
           <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
             <div className="bg-brand-primary text-white p-1.5 rounded-lg shadow-lg">
                {isScreenSharing ? <Monitor className="w-3 h-3" /> : <User className="w-3 h-3" />}
